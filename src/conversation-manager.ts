@@ -1,0 +1,335 @@
+import type { AnamClient } from "@anam-ai/js-sdk";
+
+export type ConversationState =
+  | "idle"
+  | "starting"
+  | "persona-a-speaking"
+  | "transitioning-to-b"
+  | "persona-b-speaking"
+  | "transitioning-to-a"
+  | "stopped";
+
+export interface ConversationMessage {
+  speaker: "persona-a" | "persona-b";
+  content: string;
+  timestamp: Date;
+}
+
+type StateChangeCallback = (
+  state: ConversationState,
+  prevState: ConversationState
+) => void;
+type MessageCallback = (message: ConversationMessage) => void;
+type DebugCallback = (type: string, message: string) => void;
+
+export class ConversationManager {
+  private clientA: AnamClient | null = null;
+  private clientB: AnamClient | null = null;
+
+  private state: ConversationState = "idle";
+  private messageHistoryA: Array<{ role: string; content: string }> = [];
+  private messageHistoryB: Array<{ role: string; content: string }> = [];
+  private lastProcessedMsgA: string = "";
+  private lastProcessedMsgB: string = "";
+
+  private onStateChange: StateChangeCallback | null = null;
+  private onMessage: MessageCallback | null = null;
+  private onDebug: DebugCallback | null = null;
+
+  private maxTurns = 100; // Max turns before auto-stop
+  private onMaxTurnsReached: (() => void) | null = null;
+  private turnCount = 0;
+  private transitionTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  // Track accumulated streaming content for current turn
+  private currentStreamContent = "";
+
+  setCallbacks(callbacks: {
+    onStateChange?: StateChangeCallback;
+    onMessage?: MessageCallback;
+    onDebug?: DebugCallback;
+    onMaxTurnsReached?: () => void;
+  }) {
+    this.onStateChange = callbacks.onStateChange || null;
+    this.onMessage = callbacks.onMessage || null;
+    this.onDebug = callbacks.onDebug || null;
+    this.onMaxTurnsReached = callbacks.onMaxTurnsReached || null;
+  }
+
+  setClients(clientA: AnamClient, clientB: AnamClient) {
+    this.clientA = clientA;
+    this.clientB = clientB;
+    this.setupEventListeners();
+  }
+
+  private log(type: string, message: string) {
+    const now = new Date();
+    const ts = now.toTimeString().split(' ')[0] + '.' + now.getMilliseconds().toString().padStart(3, '0');
+    console.log(`[${ts}] [ConvoMgr:${type}] ${message}`);
+  }
+
+  private setState(newState: ConversationState) {
+    const prevState = this.state;
+    this.state = newState;
+    this.log("state", `${prevState} -> ${newState}`);
+    this.onStateChange?.(newState, prevState);
+  }
+
+  private setupEventListeners() {
+    if (!this.clientA || !this.clientB) return;
+
+    // Import AnamEvent enum at runtime
+    const AnamEvent = {
+      MESSAGE_HISTORY_UPDATED: "MESSAGE_HISTORY_UPDATED",
+      MESSAGE_STREAM_EVENT_RECEIVED: "MESSAGE_STREAM_EVENT_RECEIVED",
+      CONNECTION_ESTABLISHED: "CONNECTION_ESTABLISHED",
+      VIDEO_PLAY_STARTED: "VIDEO_PLAY_STARTED",
+    };
+
+    // Persona A events
+    this.clientA.addListener(
+      AnamEvent.MESSAGE_HISTORY_UPDATED as any,
+      (messages: Array<{ role: string; content: string }>) => {
+        this.log("event", `Persona A history updated: ${messages.length} msgs`);
+        this.handleHistoryUpdate("a", messages);
+      }
+    );
+
+    this.clientA.addListener(
+      AnamEvent.MESSAGE_STREAM_EVENT_RECEIVED as any,
+      (event: { role: string; content: string }) => {
+        if (event.role === "persona") {
+          const content = event.content.trim();
+          if (content) {
+            this.log("stream", `A: "${content}"`);
+          } else {
+            this.log("stream-end", `A: [end of speech]`);
+          }
+        }
+      }
+    );
+
+    // Persona B events
+    this.clientB.addListener(
+      AnamEvent.MESSAGE_HISTORY_UPDATED as any,
+      (messages: Array<{ role: string; content: string }>) => {
+        this.log("event", `Persona B history updated: ${messages.length} msgs`);
+        this.handleHistoryUpdate("b", messages);
+      }
+    );
+
+    this.clientB.addListener(
+      AnamEvent.MESSAGE_STREAM_EVENT_RECEIVED as any,
+      (event: { role: string; content: string }) => {
+        if (event.role === "persona") {
+          const content = event.content.trim();
+          if (content) {
+            this.log("stream", `B: "${content}"`);
+          } else {
+            this.log("stream-end", `B: [end of speech]`);
+          }
+        }
+      }
+    );
+  }
+
+  private handleHistoryUpdate(
+    persona: "a" | "b",
+    messages: Array<{ role: string; content: string }>
+  ) {
+    // Find the latest persona message
+    const personaMessages = messages.filter((m) => m.role === "persona");
+    if (personaMessages.length === 0) {
+      this.log("history", `${persona.toUpperCase()}: No persona messages in history`);
+      return;
+    }
+
+    const latestPersonaMsg = personaMessages[personaMessages.length - 1];
+    const lastProcessed = persona === "a" ? this.lastProcessedMsgA : this.lastProcessedMsgB;
+
+    // Check if we already processed this message
+    if (latestPersonaMsg.content === lastProcessed) {
+      this.log("history", `${persona.toUpperCase()}: Already processed this message, skipping`);
+      return;
+    }
+
+    this.log("history", `${persona.toUpperCase()}: New message detected (${personaMessages.length} total persona msgs)`);
+
+    // Mark as processed
+    if (persona === "a") {
+      this.lastProcessedMsgA = latestPersonaMsg.content;
+      this.messageHistoryA = messages;
+    } else {
+      this.lastProcessedMsgB = latestPersonaMsg.content;
+      this.messageHistoryB = messages;
+    }
+
+    this.log(
+      "message",
+      `Persona ${persona.toUpperCase()} said: "${latestPersonaMsg.content.slice(0, 80)}..."`
+    );
+
+    // Record message
+    try {
+      this.onMessage?.({
+        speaker: persona === "a" ? "persona-a" : "persona-b",
+        content: latestPersonaMsg.content,
+        timestamp: new Date(),
+      });
+    } catch (err) {
+      this.log("error", `onMessage threw: ${err}`);
+    }
+
+    // Handle turn transition
+    try {
+      this.log("debug", `About to call handleTurnComplete for ${persona}`);
+      this.handleTurnComplete(persona, latestPersonaMsg.content);
+    } catch (err) {
+      this.log("error", `handleTurnComplete threw: ${err}`);
+    }
+  }
+
+  private handleTurnComplete(persona: "a" | "b", message: string) {
+    this.log("turn", `handleTurnComplete called: persona=${persona}, state=${this.state}`);
+
+    // Clear any pending transition timeout
+    if (this.transitionTimeout) {
+      clearTimeout(this.transitionTimeout);
+      this.transitionTimeout = null;
+    }
+
+    if (persona === "a" && this.state === "persona-a-speaking") {
+      this.log("turn", "Condition met: A finished speaking, transitioning to B");
+      this.turnCount++;
+      if (this.turnCount >= this.maxTurns) {
+        this.log("limit", `Max turns (${this.maxTurns}) reached, stopping`);
+        this.stop();
+        this.onMaxTurnsReached?.();
+        return;
+      }
+
+      this.setState("transitioning-to-b");
+      // Send immediately - no delay needed
+      this.sendToPersonaB(message);
+    } else if (persona === "b" && this.state === "persona-b-speaking") {
+      this.log("turn", "Condition met: B finished speaking, transitioning to A");
+      this.turnCount++;
+      if (this.turnCount >= this.maxTurns) {
+        this.log("limit", `Max turns (${this.maxTurns}) reached, stopping`);
+        this.stop();
+        this.onMaxTurnsReached?.();
+        return;
+      }
+
+      this.setState("transitioning-to-a");
+      // Send immediately - no delay needed
+      this.sendToPersonaA(message);
+    } else {
+      this.log("turn", `No condition matched! persona=${persona}, state=${this.state}`);
+    }
+  }
+
+  private async sendToPersonaB(message: string) {
+    this.log("send", `sendToPersonaB called, state=${this.state}, clientB=${!!this.clientB}`);
+
+    if (!this.clientB) {
+      this.log("error", "clientB is null!");
+      return;
+    }
+    if (this.state === "stopped") {
+      this.log("error", "state is stopped, aborting");
+      return;
+    }
+
+    this.log("send", `Sending to Persona B: "${message.slice(0, 50)}..."`);
+
+    try {
+      // Interrupt A to prevent it from speaking again while B responds
+      if (this.clientA) {
+        this.clientA.interruptPersona();
+        this.log("interrupt", "Interrupted Persona A");
+      }
+
+      this.log("send", "Calling sendUserMessage on clientB...");
+      this.clientB.sendUserMessage(message);
+      this.log("send", "sendUserMessage called successfully");
+      this.setState("persona-b-speaking");
+    } catch (err) {
+      this.log("error", `Failed to send to B: ${err}`);
+    }
+  }
+
+  private async sendToPersonaA(message: string) {
+    this.log("send", `sendToPersonaA called, state=${this.state}, clientA=${!!this.clientA}`);
+
+    if (!this.clientA) {
+      this.log("error", "clientA is null!");
+      return;
+    }
+    if (this.state === "stopped") {
+      this.log("error", "state is stopped, aborting");
+      return;
+    }
+
+    this.log("send", `Sending to Persona A: "${message.slice(0, 50)}..."`);
+
+    try {
+      // Interrupt B to prevent it from speaking again while A responds
+      if (this.clientB) {
+        this.clientB.interruptPersona();
+        this.log("interrupt", "Interrupted Persona B");
+      }
+
+      this.log("send", "Calling sendUserMessage on clientA...");
+      this.clientA.sendUserMessage(message);
+      this.log("send", "sendUserMessage called successfully");
+      this.setState("persona-a-speaking");
+    } catch (err) {
+      this.log("error", `Failed to send to A: ${err}`);
+    }
+  }
+
+  start() {
+    if (this.state !== "idle") {
+      this.log("warn", "Cannot start, not in idle state");
+      return;
+    }
+
+    this.turnCount = 0;
+    this.messageHistoryA = [];
+    this.messageHistoryB = [];
+    this.setState("starting");
+
+    // Persona A has greeting enabled, so it will start speaking automatically
+    // We just need to transition state once it starts
+    this.setState("persona-a-speaking");
+    this.log("info", "Started - Persona A greeting will begin");
+  }
+
+  stop() {
+    if (this.transitionTimeout) {
+      clearTimeout(this.transitionTimeout);
+      this.transitionTimeout = null;
+    }
+    this.setState("stopped");
+    this.log("info", "Conversation stopped");
+  }
+
+  reset() {
+    this.stop();
+    this.turnCount = 0;
+    this.messageHistoryA = [];
+    this.messageHistoryB = [];
+    this.lastProcessedMsgA = "";
+    this.lastProcessedMsgB = "";
+    this.setState("idle");
+  }
+
+  getState() {
+    return this.state;
+  }
+
+  getTurnCount() {
+    return this.turnCount;
+  }
+}
