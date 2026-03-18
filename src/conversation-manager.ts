@@ -25,6 +25,7 @@ type DebugCallback = (type: string, message: string) => void;
 export class ConversationManager {
   private clientA: AnamClient | null = null;
   private clientB: AnamClient | null = null;
+  private humanName: string = "";
 
   private state: ConversationState = "idle";
   private messageHistoryA: Array<{ role: string; content: string }> = [];
@@ -36,12 +37,11 @@ export class ConversationManager {
   private onMessage: MessageCallback | null = null;
   private onDebug: DebugCallback | null = null;
 
-  private maxTurns = 100; // Max turns before auto-stop
+  private maxTurns = 100;
   private onMaxTurnsReached: (() => void) | null = null;
   private turnCount = 0;
   private transitionTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  // Track accumulated streaming content for current turn
   private currentStreamContent = "";
 
   setCallbacks(callbacks: {
@@ -62,6 +62,10 @@ export class ConversationManager {
     this.setupEventListeners();
   }
 
+  setHumanName(name: string) {
+    this.humanName = name;
+  }
+
   private log(type: string, message: string) {
     const now = new Date();
     const ts = now.toTimeString().split(' ')[0] + '.' + now.getMilliseconds().toString().padStart(3, '0');
@@ -78,7 +82,6 @@ export class ConversationManager {
   private setupEventListeners() {
     if (!this.clientA || !this.clientB) return;
 
-    // Import AnamEvent enum at runtime
     const AnamEvent = {
       MESSAGE_HISTORY_UPDATED: "MESSAGE_HISTORY_UPDATED",
       MESSAGE_STREAM_EVENT_RECEIVED: "MESSAGE_STREAM_EVENT_RECEIVED",
@@ -137,7 +140,6 @@ export class ConversationManager {
     persona: "a" | "b",
     messages: Array<{ role: string; content: string }>
   ) {
-    // Find the latest persona message
     const personaMessages = messages.filter((m) => m.role === "persona");
     if (personaMessages.length === 0) {
       this.log("history", `${persona.toUpperCase()}: No persona messages in history`);
@@ -147,7 +149,6 @@ export class ConversationManager {
     const latestPersonaMsg = personaMessages[personaMessages.length - 1];
     const lastProcessed = persona === "a" ? this.lastProcessedMsgA : this.lastProcessedMsgB;
 
-    // Check if we already processed this message
     if (latestPersonaMsg.content === lastProcessed) {
       this.log("history", `${persona.toUpperCase()}: Already processed this message, skipping`);
       return;
@@ -155,7 +156,6 @@ export class ConversationManager {
 
     this.log("history", `${persona.toUpperCase()}: New message detected (${personaMessages.length} total persona msgs)`);
 
-    // Mark as processed
     if (persona === "a") {
       this.lastProcessedMsgA = latestPersonaMsg.content;
       this.messageHistoryA = messages;
@@ -169,7 +169,6 @@ export class ConversationManager {
       `Persona ${persona.toUpperCase()} said: "${latestPersonaMsg.content.slice(0, 80)}..."`
     );
 
-    // Record message
     try {
       this.onMessage?.({
         speaker: persona === "a" ? "persona-a" : "persona-b",
@@ -180,7 +179,6 @@ export class ConversationManager {
       this.log("error", `onMessage threw: ${err}`);
     }
 
-    // Handle turn transition
     try {
       this.log("debug", `About to call handleTurnComplete for ${persona}`);
       this.handleTurnComplete(persona, latestPersonaMsg.content);
@@ -192,7 +190,6 @@ export class ConversationManager {
   private handleTurnComplete(persona: "a" | "b", message: string) {
     this.log("turn", `handleTurnComplete called: persona=${persona}, state=${this.state}`);
 
-    // Clear any pending transition timeout
     if (this.transitionTimeout) {
       clearTimeout(this.transitionTimeout);
       this.transitionTimeout = null;
@@ -209,7 +206,6 @@ export class ConversationManager {
       }
 
       this.setState("transitioning-to-b");
-      // Send immediately - no delay needed
       this.sendToPersonaB(message);
     } else if (persona === "b" && this.state === "persona-b-speaking") {
       this.log("turn", "Condition met: B finished speaking, transitioning to A");
@@ -222,7 +218,6 @@ export class ConversationManager {
       }
 
       this.setState("transitioning-to-a");
-      // Send immediately - no delay needed
       this.sendToPersonaA(message);
     } else {
       this.log("turn", `No condition matched! persona=${persona}, state=${this.state}`);
@@ -244,7 +239,6 @@ export class ConversationManager {
     this.log("send", `Sending to Persona B: "${message.slice(0, 50)}..."`);
 
     try {
-      // Interrupt A to prevent it from speaking again while B responds
       if (this.clientA) {
         this.clientA.interruptPersona();
         this.log("interrupt", "Interrupted Persona A");
@@ -274,7 +268,6 @@ export class ConversationManager {
     this.log("send", `Sending to Persona A: "${message.slice(0, 50)}..."`);
 
     try {
-      // Interrupt B to prevent it from speaking again while A responds
       if (this.clientB) {
         this.clientB.interruptPersona();
         this.log("interrupt", "Interrupted Persona B");
@@ -301,7 +294,6 @@ export class ConversationManager {
     this.setState("starting");
 
     // Persona A has greeting enabled, so it will start speaking automatically
-    // We just need to transition state once it starts
     this.setState("persona-a-speaking");
     this.log("info", "Started - Persona A greeting will begin");
   }

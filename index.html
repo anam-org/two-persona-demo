@@ -3,17 +3,34 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Two Persona Conversation</title>
+  <title>Three-Way Conversation</title>
   <link rel="stylesheet" href="/src/styles.css">
 </head>
 <body>
-  <div class="container">
-    <div class="video-panels">
-      <div class="persona-panel" id="persona-a-panel">
+  <!-- Name entry screen -->
+  <div id="name-screen" class="screen">
+    <div class="name-form">
+      <h1>Join the conversation</h1>
+      <p>You'll be debating nonsense with Gloria and Maurice.</p>
+      <input type="text" id="name-input" placeholder="Enter your name" autocomplete="off" autofocus>
+      <button id="name-submit-btn">Join</button>
+    </div>
+  </div>
+
+  <!-- Main call screen -->
+  <div id="call-screen" class="screen" style="display: none;">
+    <div class="video-grid">
+      <div class="participant" id="persona-a-panel">
         <video id="video-a" autoplay playsinline></video>
+        <div class="participant-label">Gloria</div>
       </div>
-      <div class="persona-panel" id="persona-b-panel">
+      <div class="participant" id="persona-b-panel">
         <video id="video-b" autoplay playsinline></video>
+        <div class="participant-label">Maurice</div>
+      </div>
+      <div class="participant" id="human-panel">
+        <video id="video-human" autoplay playsinline muted></video>
+        <div class="participant-label" id="human-label">You</div>
       </div>
     </div>
 
