@@ -110,11 +110,12 @@ body {
 
 .participant {
   position: relative;
-  background: #111;
+  background: #222;
   border-radius: 10px;
   overflow: hidden;
   /* Constrain all tiles to 3:2 aspect ratio matching 720x480 streams */
   aspect-ratio: 3 / 2;
+  width: 100%;
   max-height: 100%;
   justify-self: center;
   align-self: center;
