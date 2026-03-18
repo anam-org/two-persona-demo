@@ -186,7 +186,7 @@ const CONFIG = {
       silenceBeforeAutoEndTurnSeconds: 10,
     },
   },
-  llmId: "88190a76-3e87-4935-ab39-f4f73038815a",
+  llmId: "b4f89001-9638-4879-a9c3-02cc9f9f2004", // GPT 4.1 - good tool calling
 };
 
 const apiKey = import.meta.env.VITE_ANAM_API_KEY;
@@ -328,9 +328,8 @@ async function initializeClients() {
   clientA = createClient(tokenA);
   clientB = createClient(tokenB);
 
-  // Mute both mics - the conversation manager handles sending messages between personas
-  clientA.muteInputAudio();
-  clientB.muteInputAudio();
+  // Don't mute input audio - the human needs to be heard by both personas.
+  // The skip_turn tool + prompts handle turn-taking so they don't butt in.
 
   log("Starting streams...");
   await Promise.all([

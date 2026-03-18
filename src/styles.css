@@ -113,13 +113,16 @@ body {
   background: #111;
   border-radius: 10px;
   overflow: hidden;
+  /* Constrain all tiles to 3:2 aspect ratio matching 720x480 streams */
+  aspect-ratio: 3 / 2;
+  max-height: 100%;
+  justify-self: center;
+  align-self: center;
 }
 
 /* Third participant (human) spans bottom row centered */
 .participant:nth-child(3) {
   grid-column: 1 / -1;
-  max-width: 50%;
-  justify-self: center;
 }
 
 .participant video {
