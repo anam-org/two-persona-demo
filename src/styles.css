@@ -121,9 +121,10 @@ body {
   align-self: center;
 }
 
-/* Third participant (human) spans bottom row centered */
+/* Third participant (human) spans bottom row centered, same size as others */
 .participant:nth-child(3) {
   grid-column: 1 / -1;
+  width: 50%;
 }
 
 .participant video {
