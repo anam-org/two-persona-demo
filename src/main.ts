@@ -159,6 +159,8 @@ function getRandomTopic() {
   return TOPICS[Math.floor(Math.random() * TOPICS.length)];
 }
 
+const SKIP_TURN_TOOL_ID = "69a89bda-9e11-443f-84c0-1cbea75e4fcb";
+
 const CONFIG = {
   personaA: {
     name: "Gloria",
@@ -184,14 +186,27 @@ const CONFIG = {
       silenceBeforeAutoEndTurnSeconds: 10,
     },
   },
-  llmId: "88190a76-3e87-4935-ab39-f4f73038815a",
+  llmId: "a7cf662c-2ace-4de1-a21e-ef0fbf144bb7", // GPT OSS 120B - great at tool calling
 };
 
 const apiKey = import.meta.env.VITE_ANAM_API_KEY;
 
+// State
+let humanName = "";
+let clientA: AnamClient | null = null;
+let clientB: AnamClient | null = null;
+let humanStream: MediaStream | null = null;
+let isRunning = false;
+const conversationManager = new ConversationManager();
+
 // DOM Elements
+const nameScreen = document.getElementById("name-screen")!;
+const callScreen = document.getElementById("call-screen")!;
+const nameInput = document.getElementById("name-input") as HTMLInputElement;
+const nameSubmitBtn = document.getElementById("name-submit-btn") as HTMLButtonElement;
 const startBtn = document.getElementById("start-btn") as HTMLButtonElement;
 const newTopicBtn = document.getElementById("new-topic-btn") as HTMLButtonElement;
+const humanLabel = document.getElementById("human-label")!;
 
 // Timestamped logging
 function log(message: string) {
@@ -200,11 +215,70 @@ function log(message: string) {
   console.log(`[${ts}] ${message}`);
 }
 
-// State
-let clientA: AnamClient | null = null;
-let clientB: AnamClient | null = null;
-let isRunning = false;
-const conversationManager = new ConversationManager();
+// Name entry
+nameInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") nameSubmitBtn.click();
+});
+
+nameSubmitBtn.addEventListener("click", async () => {
+  const name = nameInput.value.trim();
+  if (!name) return;
+
+  humanName = name;
+  humanLabel.textContent = name;
+  nameSubmitBtn.disabled = true;
+  nameSubmitBtn.textContent = "Starting camera...";
+
+  try {
+    // Request camera permission
+    humanStream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: false, // We don't need audio from the human's mic for the selfie view
+    });
+
+    const videoEl = document.getElementById("video-human") as HTMLVideoElement;
+    videoEl.srcObject = humanStream;
+
+    // Transition to call screen
+    nameScreen.style.display = "none";
+    callScreen.style.display = "flex";
+  } catch (err) {
+    console.error("Camera access denied:", err);
+    // Still proceed without camera
+    nameScreen.style.display = "none";
+    callScreen.style.display = "flex";
+  }
+});
+
+// Build system prompts that include the human's name and turn-taking rules
+function buildPrompts(topic: typeof TOPICS[0]) {
+  const turnRules = `
+
+TURN-TAKING RULES (critical — you MUST follow these):
+- This is a three-way conversation between you, ${humanName}, and the other persona.
+- When it is NOT your turn to speak, you MUST respond with ONLY the text "[SKIP]" (including brackets). Nothing else. No other words.
+- Your DEFAULT action is to say "[SKIP]". Only speak real words if someone has specifically said your name or directly addressed you.
+- If the last speaker addressed someone else by name, you MUST respond with "[SKIP]" — even if the topic is interesting to you.
+- If nobody addressed you specifically, respond with "[SKIP]".
+- When someone DOES say your name or asks you a question directly, respond with 1-2 sentences max.
+- Do NOT end every response by calling on someone by name. Just state your piece and stop. Let the conversation flow naturally.
+- Be passionate about the topic but respect the three-way dynamic.
+- NEVER say things like "Okay, I'll wait" or "Sure thing" or "Go ahead" — just say "[SKIP]".`;
+
+  const gloriaPrompt = `You are Gloria, in a three-way debate with Maurice and ${humanName} about ${topic.topic}.
+
+${topic.gloria}
+
+You know the other people in this conversation are Maurice and ${humanName}. Use their names only when you want to directly ask them something specific.${turnRules}`;
+
+  const mauricePrompt = `You are Maurice, in a three-way debate with Gloria and ${humanName} about ${topic.topic}.
+
+${topic.maurice}
+
+You know the other people in this conversation are Gloria and ${humanName}. Use their names only when you want to directly ask them something specific.${turnRules}`;
+
+  return { gloriaPrompt, mauricePrompt };
+}
 
 // Session token exchange
 async function getSessionToken(personaConfig: typeof CONFIG.personaA, systemPrompt: string): Promise<string> {
@@ -239,24 +313,11 @@ async function getSessionToken(personaConfig: typeof CONFIG.personaA, systemProm
 
 // Initialize both clients in parallel
 async function initializeClients() {
-  // Pick a random topic
   const topic = getRandomTopic();
   log(`Topic selected: ${topic.topic}`);
 
-  // Build system prompts
-  const gloriaPrompt = `You are Gloria, having a passionate debate with Maurice about ${topic.topic}.
+  const { gloriaPrompt, mauricePrompt } = buildPrompts(topic);
 
-${topic.gloria}
-
-Keep responses to 1-2 sentences. Be passionate. Start by stating your position on the topic.`;
-
-  const mauricePrompt = `You are Maurice, having a passionate debate with Gloria about ${topic.topic}.
-
-${topic.maurice}
-
-Keep responses to 1-2 sentences. Be equally passionate. Respond to what Gloria says and defend your position.`;
-
-  // Get both tokens in parallel
   log("Requesting session tokens...");
   const [tokenA, tokenB] = await Promise.all([
     getSessionToken(CONFIG.personaA, gloriaPrompt),
@@ -264,16 +325,30 @@ Keep responses to 1-2 sentences. Be equally passionate. Respond to what Gloria s
   ]);
   log("Session tokens received");
 
-  // Create both clients
   log("Creating clients...");
   clientA = createClient(tokenA);
   clientB = createClient(tokenB);
 
-  // Mute both mics
-  clientA.muteInputAudio();
-  clientB.muteInputAudio();
+  // Don't mute input audio - the human needs to be heard by both personas.
+  // The skip_turn tool + prompts handle turn-taking so they don't butt in.
 
-  // Start both streams in parallel
+  // Log tool call events and notify conversation manager of skip_turn
+  const toolEvents = ["TOOL_CALL_STARTED", "TOOL_CALL_COMPLETED", "TOOL_CALL_FAILED"] as const;
+  for (const evt of toolEvents) {
+    clientA.addListener(evt as any, (payload: any) => {
+      log(`[Gloria] ${evt}: ${payload.tool_name ?? "unknown"} ${JSON.stringify(payload.arguments ?? payload.error_message ?? "")}`);
+      if (evt === "TOOL_CALL_STARTED" && payload.tool_name === "skip_turn") {
+        conversationManager.notifySkipTurn("a");
+      }
+    });
+    clientB.addListener(evt as any, (payload: any) => {
+      log(`[Maurice] ${evt}: ${payload.tool_name ?? "unknown"} ${JSON.stringify(payload.arguments ?? payload.error_message ?? "")}`);
+      if (evt === "TOOL_CALL_STARTED" && payload.tool_name === "skip_turn") {
+        conversationManager.notifySkipTurn("b");
+      }
+    });
+  }
+
   log("Starting streams...");
   await Promise.all([
     clientA.streamToVideoElement("video-a"),
@@ -298,12 +373,12 @@ async function startConversation() {
   newTopicBtn.style.display = "none";
 
   try {
-    log("Fetching session tokens...");
     await initializeClients();
     log("Clients initialized, starting conversation manager");
 
     if (clientA && clientB) {
       conversationManager.setClients(clientA, clientB);
+      conversationManager.setHumanName(humanName);
       conversationManager.setCallbacks({
         onMaxTurnsReached: () => {
           log("Max turns reached, auto-stopping session");
@@ -357,18 +432,15 @@ async function stopConversation() {
   log("Conversation stopped");
 }
 
-// New topic - stop and restart with fresh topic
+// New topic
 async function newTopic() {
   log("New topic requested, restarting...");
   newTopicBtn.disabled = true;
   newTopicBtn.textContent = "Restarting...";
 
   await stopConversation();
-
-  // Small delay to ensure cleanup
   await new Promise(resolve => setTimeout(resolve, 100));
 
-  // Reset buttons for fresh start
   startBtn.style.display = "none";
   newTopicBtn.textContent = "New Topic";
 
