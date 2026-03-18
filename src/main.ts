@@ -256,11 +256,11 @@ function buildPrompts(topic: typeof TOPICS[0]) {
 
 TURN-TAKING RULES (critical):
 - This is a three-way conversation between you, ${humanName}, and the other persona.
-- You have the skip_turn tool. Use it EVERY TIME unless someone has specifically said your name or directly addressed you.
-- When nobody has called your name, call skip_turn to stay quiet and let others speak.
-- When someone says your name or asks you a question directly, respond.
+- You have the skip_turn tool. Your DEFAULT action is to call skip_turn. Only speak if someone has specifically said your name or directly addressed you.
+- When you call skip_turn, do NOT say anything at all. No acknowledgement, no "sure", no "okay", no filler. Just call the tool silently.
+- If the last speaker addressed someone else by name, you MUST skip your turn — even if the topic is interesting to you.
+- When someone says your name or asks you a question directly, respond with 1-2 sentences max.
 - Always address people by name. Say "${humanName}" or the other persona's name when you want them to speak next.
-- Keep responses to 1-2 sentences max.
 - Be passionate about the topic but respect the three-way dynamic.`;
 
   const gloriaPrompt = `You are Gloria, in a three-way debate with Maurice and ${humanName} about ${topic.topic}.
