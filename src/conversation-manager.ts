@@ -44,6 +44,10 @@ export class ConversationManager {
 
   private currentStreamContent = "";
 
+  // Track when a persona has called skip_turn so we can drop the acknowledgement
+  private skipTurnPendingA = false;
+  private skipTurnPendingB = false;
+
   setCallbacks(callbacks: {
     onStateChange?: StateChangeCallback;
     onMessage?: MessageCallback;
@@ -64,6 +68,16 @@ export class ConversationManager {
 
   setHumanName(name: string) {
     this.humanName = name;
+  }
+
+  /** Called from main.ts when a TOOL_CALL_STARTED event fires with tool_name=skip_turn */
+  notifySkipTurn(persona: "a" | "b") {
+    this.log("skip", `Persona ${persona.toUpperCase()} called skip_turn`);
+    if (persona === "a") {
+      this.skipTurnPendingA = true;
+    } else {
+      this.skipTurnPendingB = true;
+    }
   }
 
   private log(type: string, message: string) {
@@ -168,6 +182,23 @@ export class ConversationManager {
       "message",
       `Persona ${persona.toUpperCase()} said: "${latestPersonaMsg.content.slice(0, 80)}..."`
     );
+
+    // If this persona called skip_turn, their response is just an acknowledgement.
+    // Drop it — don't relay to the other persona. Go back to the previous speaker's state
+    // so the other persona can keep talking or the human can speak.
+    const skipped = persona === "a" ? this.skipTurnPendingA : this.skipTurnPendingB;
+    if (skipped) {
+      if (persona === "a") this.skipTurnPendingA = false;
+      else this.skipTurnPendingB = false;
+      this.log("skip", `Persona ${persona.toUpperCase()} skipped turn, dropping "${latestPersonaMsg.content.slice(0, 40)}". NOT relaying.`);
+      // Go back to the other persona speaking so the relay loop picks up from there
+      if (persona === "a") {
+        this.setState("persona-b-speaking");
+      } else {
+        this.setState("persona-a-speaking");
+      }
+      return;
+    }
 
     try {
       this.onMessage?.({
@@ -314,6 +345,8 @@ export class ConversationManager {
     this.messageHistoryB = [];
     this.lastProcessedMsgA = "";
     this.lastProcessedMsgB = "";
+    this.skipTurnPendingA = false;
+    this.skipTurnPendingB = false;
     this.setState("idle");
   }
 

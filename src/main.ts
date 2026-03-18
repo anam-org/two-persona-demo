@@ -186,7 +186,7 @@ const CONFIG = {
       silenceBeforeAutoEndTurnSeconds: 10,
     },
   },
-  llmId: "b4f89001-9638-4879-a9c3-02cc9f9f2004", // GPT 4.1 - good tool calling
+  llmId: "a7cf662c-2ace-4de1-a21e-ef0fbf144bb7", // GPT OSS 120B - great at tool calling
 };
 
 const apiKey = import.meta.env.VITE_ANAM_API_KEY;
@@ -331,14 +331,20 @@ async function initializeClients() {
   // Don't mute input audio - the human needs to be heard by both personas.
   // The skip_turn tool + prompts handle turn-taking so they don't butt in.
 
-  // Log tool call events (skip_turn, etc.)
+  // Log tool call events and notify conversation manager of skip_turn
   const toolEvents = ["TOOL_CALL_STARTED", "TOOL_CALL_COMPLETED", "TOOL_CALL_FAILED"] as const;
   for (const evt of toolEvents) {
     clientA.addListener(evt as any, (payload: any) => {
       log(`[Gloria] ${evt}: ${payload.tool_name ?? "unknown"} ${JSON.stringify(payload.arguments ?? payload.error_message ?? "")}`);
+      if (evt === "TOOL_CALL_STARTED" && payload.tool_name === "skip_turn") {
+        conversationManager.notifySkipTurn("a");
+      }
     });
     clientB.addListener(evt as any, (payload: any) => {
       log(`[Maurice] ${evt}: ${payload.tool_name ?? "unknown"} ${JSON.stringify(payload.arguments ?? payload.error_message ?? "")}`);
+      if (evt === "TOOL_CALL_STARTED" && payload.tool_name === "skip_turn") {
+        conversationManager.notifySkipTurn("b");
+      }
     });
   }
 
