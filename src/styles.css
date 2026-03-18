@@ -98,7 +98,11 @@ body {
   gap: 12px;
 }
 
-/* Video grid - 2 on top, 1 on bottom (like Zoom with 3 people) */
+/*
+  Video grid: 3 equal tiles, each 3:2 aspect ratio.
+  Row height is driven by the grid; tile width is derived from height via aspect-ratio.
+  This avoids the tiles blowing out wider than their cell.
+*/
 .video-grid {
   flex: 1;
   display: grid;
@@ -113,18 +117,17 @@ body {
   background: #222;
   border-radius: 10px;
   overflow: hidden;
-  /* Constrain all tiles to 3:2 aspect ratio matching 720x480 streams */
   aspect-ratio: 3 / 2;
-  width: 100%;
-  max-height: 100%;
+  /* Height fills row, width follows from aspect-ratio */
+  height: 100%;
+  max-width: 100%;
   justify-self: center;
   align-self: center;
 }
 
-/* Third participant (human) spans bottom row centered, same size as others */
+/* Third participant (human) spans bottom row centered */
 .participant:nth-child(3) {
   grid-column: 1 / -1;
-  width: 50%;
 }
 
 .participant video {

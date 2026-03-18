@@ -331,6 +331,17 @@ async function initializeClients() {
   // Don't mute input audio - the human needs to be heard by both personas.
   // The skip_turn tool + prompts handle turn-taking so they don't butt in.
 
+  // Log tool call events (skip_turn, etc.)
+  const toolEvents = ["TOOL_CALL_STARTED", "TOOL_CALL_COMPLETED", "TOOL_CALL_FAILED"] as const;
+  for (const evt of toolEvents) {
+    clientA.addListener(evt as any, (payload: any) => {
+      log(`[Gloria] ${evt}: ${payload.tool_name ?? "unknown"} ${JSON.stringify(payload.arguments ?? payload.error_message ?? "")}`);
+    });
+    clientB.addListener(evt as any, (payload: any) => {
+      log(`[Maurice] ${evt}: ${payload.tool_name ?? "unknown"} ${JSON.stringify(payload.arguments ?? payload.error_message ?? "")}`);
+    });
+  }
+
   log("Starting streams...");
   await Promise.all([
     clientA.streamToVideoElement("video-a"),
