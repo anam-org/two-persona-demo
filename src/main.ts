@@ -254,14 +254,16 @@ nameSubmitBtn.addEventListener("click", async () => {
 function buildPrompts(topic: typeof TOPICS[0]) {
   const turnRules = `
 
-TURN-TAKING RULES (critical):
+TURN-TAKING RULES (critical — you MUST follow these):
 - This is a three-way conversation between you, ${humanName}, and the other persona.
-- You have the skip_turn tool. Your DEFAULT action is to call skip_turn. Only speak if someone has specifically said your name or directly addressed you.
-- When you call skip_turn, do NOT say anything at all. No acknowledgement, no "sure", no "okay", no filler. Just call the tool silently.
-- If the last speaker addressed someone else by name, you MUST skip your turn — even if the topic is interesting to you.
-- When someone says your name or asks you a question directly, respond with 1-2 sentences max.
+- When it is NOT your turn to speak, you MUST respond with ONLY the text "[SKIP]" (including brackets). Nothing else. No other words.
+- Your DEFAULT action is to say "[SKIP]". Only speak real words if someone has specifically said your name or directly addressed you.
+- If the last speaker addressed someone else by name, you MUST respond with "[SKIP]" — even if the topic is interesting to you.
+- If nobody addressed you specifically, respond with "[SKIP]".
+- When someone DOES say your name or asks you a question directly, respond with 1-2 sentences max.
 - Do NOT end every response by calling on someone by name. Just state your piece and stop. Let the conversation flow naturally.
-- Be passionate about the topic but respect the three-way dynamic.`;
+- Be passionate about the topic but respect the three-way dynamic.
+- NEVER say things like "Okay, I'll wait" or "Sure thing" or "Go ahead" — just say "[SKIP]".`;
 
   const gloriaPrompt = `You are Gloria, in a three-way debate with Maurice and ${humanName} about ${topic.topic}.
 
@@ -296,7 +298,6 @@ async function getSessionToken(personaConfig: typeof CONFIG.personaA, systemProm
         systemPrompt: systemPrompt,
         skipGreeting: personaConfig.skipGreeting,
         voiceDetectionOptions: personaConfig.voiceDetectionOptions,
-        toolIds: [SKIP_TURN_TOOL_ID],
       },
     }),
   });

@@ -48,6 +48,24 @@ export class ConversationManager {
   private skipTurnPendingA = false;
   private skipTurnPendingB = false;
 
+  // Patterns that indicate a persona is trying to skip/pass its turn
+  private static SKIP_PATTERNS = [
+    /^\[skip\]$/i,
+    /^\[pass\]$/i,
+    /^\(skip\)$/i,
+    /^\(pass\)$/i,
+    /^skip$/i,
+    /^pass$/i,
+  ];
+
+  // Short acknowledgement phrases that indicate the persona is deferring
+  private static ACK_PATTERNS = [
+    /^okay[.,!]?\s*(i['']ll wait|i['']ll pass|sure|go ahead|you go|passing)/i,
+    /^sure[.,!]?\s*(thing|go ahead|i['']ll wait|i['']ll pass|you go)/i,
+    /^(i['']ll wait|i['']ll pass|passing|go ahead|your turn)/i,
+    /^alright[.,!]?\s*(i['']ll wait|go ahead|passing|your turn)/i,
+  ];
+
   setCallbacks(callbacks: {
     onStateChange?: StateChangeCallback;
     onMessage?: MessageCallback;
@@ -78,6 +96,25 @@ export class ConversationManager {
     } else {
       this.skipTurnPendingB = true;
     }
+  }
+
+  /** Check if a message is a skip/pass signal (either explicit marker or short acknowledgement) */
+  private isSkipMessage(content: string): boolean {
+    const trimmed = content.trim();
+
+    // Check explicit skip markers
+    for (const pattern of ConversationManager.SKIP_PATTERNS) {
+      if (pattern.test(trimmed)) return true;
+    }
+
+    // Check short acknowledgement patterns (only for short messages to avoid false positives)
+    if (trimmed.length < 80) {
+      for (const pattern of ConversationManager.ACK_PATTERNS) {
+        if (pattern.test(trimmed)) return true;
+      }
+    }
+
+    return false;
   }
 
   private log(type: string, message: string) {
@@ -183,14 +220,16 @@ export class ConversationManager {
       `Persona ${persona.toUpperCase()} said: "${latestPersonaMsg.content.slice(0, 80)}..."`
     );
 
-    // If this persona called skip_turn, their response is just an acknowledgement.
-    // Drop it — don't relay to the other persona. Go back to the previous speaker's state
-    // so the other persona can keep talking or the human can speak.
-    const skipped = persona === "a" ? this.skipTurnPendingA : this.skipTurnPendingB;
-    if (skipped) {
+    // Check 1: Tool-based skip detection (if TOOL_CALL_STARTED fired)
+    const toolSkipped = persona === "a" ? this.skipTurnPendingA : this.skipTurnPendingB;
+    // Check 2: Client-side skip detection (marker phrase or short acknowledgement)
+    const contentSkipped = this.isSkipMessage(latestPersonaMsg.content);
+
+    if (toolSkipped || contentSkipped) {
       if (persona === "a") this.skipTurnPendingA = false;
       else this.skipTurnPendingB = false;
-      this.log("skip", `Persona ${persona.toUpperCase()} skipped turn, dropping "${latestPersonaMsg.content.slice(0, 40)}". NOT relaying.`);
+      const reason = toolSkipped ? "tool_call" : "content_match";
+      this.log("skip", `Persona ${persona.toUpperCase()} skipped turn (${reason}), dropping "${latestPersonaMsg.content.slice(0, 60)}". NOT relaying.`);
       // Go back to the other persona speaking so the relay loop picks up from there
       if (persona === "a") {
         this.setState("persona-b-speaking");
